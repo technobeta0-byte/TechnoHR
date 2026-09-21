@@ -4,31 +4,39 @@ import { api } from '../api/sheets'
 import { getLocation } from '../utils/location'
 import { registerWebAuthn } from '../utils/webauthn'
 import { EmployeeLayout } from '../components/Layout'
-import { FiCheckCircle, FiXCircle, FiMapPin, FiClock, FiAlertCircle, FiRefreshCw, FiShield, FiCalendar } from 'react-icons/fi'
+import { FiCheckCircle, FiXCircle, FiMapPin, FiClock, FiAlertCircle, FiRefreshCw, FiShield, FiCalendar, FiLock, FiSettings } from 'react-icons/fi'
 import { format } from 'date-fns'
 import { ar } from 'date-fns/locale'
 
 export default function EmployeeHome() {
-  const { employee } = useStore()
+  const { employee, settings } = useStore()
   const [record, setRecord]   = useState(null)
   const [loading, setLoading] = useState(false)
   const [bioLoading, setBioLoading] = useState(false)
   const [msg, setMsg]         = useState(null)
   const [time, setTime]       = useState(new Date())
+  
+  // Modals
   const [showLeaveModal, setShowLeaveModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [leaveData, setLeaveData] = useState({ start_date: '', end_date: '', leave_type: 'annual', reason: '' })
   const [leaveLoading, setLeaveLoading] = useState(false)
 
   useEffect(() => {
     loadStatus()
-    const t = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(t)
+    // تحديث كل ثانية للساعة
+    const t1 = setInterval(() => setTime(new Date()), 1000)
+    // تحديث دوري كل 15 ثانية لحالة اليوم
+    const t2 = setInterval(() => loadStatus(), 15000)
+    return () => { clearInterval(t1); clearInterval(t2) }
   }, [])
 
   const loadStatus = async () => {
     try {
       const res = await api.todayStatus(employee.employee_id)
-      if (res.success) setRecord(res.data)
+      if (res.success && res.data) {
+        setRecord(res.data)
+      }
     } catch {}
   }
 
@@ -42,20 +50,22 @@ export default function EmployeeHome() {
         lng: loc.lng,
         method: 'password',
       })
-      setMsg({ type: res.success ? 'success' : 'error', text: res.message || res.error })
       if (res.success) {
-        setRecord(prev => ({
-          ...prev,
+        setMsg({ type: 'success', text: res.message || 'تم تسجيل الحضور بنجاح ✅' })
+        setRecord({
           check_in_time: res.check_in_time || format(new Date(), 'HH:mm:ss'),
+          check_out_time: null,
           status: res.status,
           late_minutes: res.late_minutes || 0
-        }))
-        loadStatus()
+        })
+      } else {
+        setMsg({ type: 'error', text: res.error })
       }
     } catch (e) {
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
+      loadStatus()
     }
   }
 
@@ -66,19 +76,21 @@ export default function EmployeeHome() {
         employee_id: employee.employee_id,
         method: 'password',
       })
-      setMsg({ type: res.success ? 'success' : 'error', text: res.message || res.error })
       if (res.success) {
+        setMsg({ type: 'success', text: res.message || 'تم تسجيل الانصراف بنجاح ✅' })
         setRecord(prev => ({
           ...prev,
           check_out_time: res.check_out_time || format(new Date(), 'HH:mm:ss'),
           total_hours: res.total_hours || 0
         }))
-        loadStatus()
+      } else {
+        setMsg({ type: 'error', text: res.error })
       }
     } catch (e) {
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
+      loadStatus()
     }
   }
 
@@ -88,7 +100,10 @@ export default function EmployeeHome() {
       const credId = await registerWebAuthn(employee.employee_id, employee.name)
       const res = await api.saveWebAuthn(employee.employee_id, credId)
       if (res.success) {
-        setMsg({ type: 'success', text: 'تم تسجيل البصمة/الوجه بنجاح لهذا الجهاز! ✅' })
+        // حفظ آخر credential محلياً لتسهيل الدخول بدون كتابة كود الموظف
+        localStorage.setItem('technohr_last_bio_emp', employee.employee_id)
+        localStorage.setItem('technohr_last_bio_cred', credId)
+        setMsg({ type: 'success', text: 'تم تسجيل وتفعيل البصمة/الوجه لجميع المرات القادمة! ✅' })
       } else {
         setMsg({ type: 'error', text: res.error || 'فشل حفظ البصمة في السيرفر' })
       }
@@ -120,14 +135,23 @@ export default function EmployeeHome() {
     }
   }
 
+  // شروط حالة الحضور والانصراف
   const hasIn  = !!record?.check_in_time
   const hasOut = !!record?.check_out_time
   const dateStr = format(time, 'EEEE، d MMMM yyyy', { locale: ar })
   const timeStr = format(time, 'HH:mm:ss')
 
   return (
-    <EmployeeLayout title="TechnoHR" subtitle={employee?.name}>
+    <EmployeeLayout title={settings?.branch_name || "TechnoHR"} subtitle={employee?.name}>
       <div className="px-4 pt-4 pb-6 space-y-4">
+
+        {/* ── Branch Header Banner (Logo & Branch) ─────────────────────────── */}
+        {settings?.logo_url && (
+          <div className="flex items-center justify-center gap-3 bg-white dark:bg-dark-card p-3 rounded-2xl border border-gray-100 dark:border-dark-border">
+            <img src={settings.logo_url} alt="Logo" className="w-10 h-10 object-contain rounded-xl" />
+            <span className="font-bold text-base dark:text-white">{settings.branch_name}</span>
+          </div>
+        )}
 
         {/* ── Clock Card ─────────────────────────────── */}
         <div className="card text-center space-y-1 border-gold-200 dark:border-gold-800/30 bg-gradient-to-br from-gold-50 to-white dark:from-gold-900/10 dark:to-dark-card">
@@ -137,7 +161,7 @@ export default function EmployeeHome() {
           </p>
           <div className="flex items-center justify-center gap-1 text-xs text-gray-400 dark:text-dark-muted">
             <FiMapPin className="w-3 h-3" />
-            <span>القاهرة</span>
+            <span>نطاق الفرع المسموح: {settings?.radius_meters || 100} متر</span>
           </div>
         </div>
 
@@ -155,7 +179,7 @@ export default function EmployeeHome() {
               <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-dark-card2 flex items-center justify-center">
                 <FiClock className="w-5 h-5" />
               </div>
-              <span className="text-sm font-semibold">لم يتم تسجيل الحضور بعد</span>
+              <span className="text-sm font-semibold">لم يتم تسجيل الحضور اليوم</span>
             </div>
           ) : (
             <div className="space-y-3">
@@ -165,7 +189,7 @@ export default function EmployeeHome() {
                     <FiCheckCircle className="w-5 h-5 text-green-500" />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400 dark:text-dark-muted">الحضور</p>
+                    <p className="text-xs text-gray-400 dark:text-dark-muted">أول وقت حضور</p>
                     <p className="font-bold text-lg text-gray-900 dark:text-white">{record.check_in_time}</p>
                   </div>
                 </div>
@@ -180,7 +204,7 @@ export default function EmployeeHome() {
                     <FiXCircle className="w-5 h-5 text-blue-500" />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400 dark:text-dark-muted">الانصراف</p>
+                    <p className="text-xs text-gray-400 dark:text-dark-muted">آخر وقت انصراف</p>
                     <p className="font-bold text-lg text-gray-900 dark:text-white">{record.check_out_time}</p>
                   </div>
                 </div>
@@ -195,7 +219,7 @@ export default function EmployeeHome() {
 
               {hasIn && hasOut && (
                 <div className="bg-gray-50 dark:bg-dark-card2 rounded-2xl p-3 text-center">
-                  <p className="text-xs text-gray-400 dark:text-dark-muted">إجمالي الساعات اليوم</p>
+                  <p className="text-xs text-gray-400 dark:text-dark-muted">إجمالي ساعات العمل المسجلة</p>
                   <p className="text-2xl font-black gradient-text">{record.total_hours} ساعة</p>
                 </div>
               )}
@@ -215,7 +239,7 @@ export default function EmployeeHome() {
           </div>
         )}
 
-        {/* ── Action Buttons ─────────────────────────── */}
+        {/* ── Main Action Button ─────────────────────────── */}
         {!hasIn && (
           <button
             onClick={handleCheckIn}
@@ -243,29 +267,26 @@ export default function EmployeeHome() {
         {hasIn && hasOut && (
           <div className="card text-center py-6 space-y-2 border-green-200 dark:border-green-800/30">
             <FiCheckCircle className="w-12 h-12 text-green-500 mx-auto" />
-            <p className="font-bold text-lg text-gray-900 dark:text-white">تم تسجيل يومك كاملاً ✅</p>
+            <p className="font-bold text-lg text-gray-900 dark:text-white">تم تسجيل حضورك وانصرافك بنجاح ✅</p>
           </div>
         )}
 
-        {/* ── Quick Actions ─────────────────────────── */}
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            onClick={handleRegisterBio}
-            disabled={bioLoading}
-            className="card flex flex-col items-center justify-center p-4 gap-2 hover:border-gold-500 transition-all text-center cursor-pointer"
-          >
-            <FiShield className="w-6 h-6 text-gold-500" />
-            <span className="text-xs font-bold dark:text-white">ربط البصمة / Face ID</span>
-          </button>
-
-          <button
-            onClick={() => setShowLeaveModal(true)}
-            className="card flex flex-col items-center justify-center p-4 gap-2 hover:border-gold-500 transition-all text-center cursor-pointer"
-          >
-            <FiCalendar className="w-6 h-6 text-blue-500" />
-            <span className="text-xs font-bold dark:text-white">طلب إجازة جديدة</span>
-          </button>
-        </div>
+        {/* ── Leave Request Card ─────────────────────────── */}
+        <button
+          onClick={() => setShowLeaveModal(true)}
+          className="card w-full flex items-center justify-between p-4 hover:border-gold-500 transition-all cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+              <FiCalendar className="w-5 h-5 text-blue-500" />
+            </div>
+            <div className="text-right">
+              <p className="font-bold text-sm dark:text-white">طلب إجازة جديد</p>
+              <p className="text-xs text-gray-400">تقديم طلب إجازة سنوية أو بدون مرتب</p>
+            </div>
+          </div>
+          <span className="text-xs text-gold-600 font-bold">تقديم ←</span>
+        </button>
 
         {/* ── Employee Info ───────────────────────────── */}
         <div className="card space-y-3">
@@ -280,6 +301,28 @@ export default function EmployeeHome() {
             <InfoBox label="رصيد الإجازات السنوي" value={`${employee?.annual_leave_days || 21} يوم`} />
             <InfoBox label="القسم" value={employee?.department || 'غير محدد'} />
           </div>
+        </div>
+
+        {/* ── Settings & Biometric Section (إعدادات الحساب والأمان) ────────────────── */}
+        <div className="card space-y-3">
+          <h3 className="font-bold text-sm text-gray-500 dark:text-dark-muted flex items-center gap-1">
+            <FiSettings className="w-4 h-4 text-gold-500" />
+            إعدادات الحساب والأمان
+          </h3>
+          <button
+            onClick={handleRegisterBio}
+            disabled={bioLoading}
+            className="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-dark-card2 rounded-2xl border border-gray-100 dark:border-dark-border hover:border-gold-500 transition-all text-right cursor-pointer"
+          >
+            <div className="flex items-center gap-3">
+              <FiShield className="w-5 h-5 text-gold-500" />
+              <div>
+                <p className="text-xs font-bold dark:text-white">تفعيل البصمة / Face ID لهذا الجهاز</p>
+                <p className="text-[10px] text-gray-400">للدخول المباشر بدون كود الموظف مرة أخرى</p>
+              </div>
+            </div>
+            {bioLoading ? <div className="w-4 h-4 border-2 border-gold-500 border-t-transparent rounded-full animate-spin" /> : <span className="text-xs text-gold-600 font-bold">تفعيل</span>}
+          </button>
         </div>
 
         {/* ── Modal Request Leave ───────────────────────────── */}

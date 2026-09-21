@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore'
 import { api } from '../api/sheets'
@@ -22,11 +22,20 @@ export default function EmployeeLogin() {
   const { setEmployee, isDark } = useStore()
   const navigate = useNavigate()
 
+  useEffect(() => {
+    // محاولة استرجاع آخر كود موظف دخل على هذا الجهاز
+    const lastEmp = localStorage.getItem('technohr_last_bio_emp')
+    if (lastEmp) {
+      setEmpId(lastEmp)
+    }
+  }, [])
+
   const doLogin = async (m, extra = {}) => {
-    if (!empId.trim() && m !== 'nfc') { setError('أدخل كود الموظف'); return }
+    const targetEmpId = empId.trim().toUpperCase() || localStorage.getItem('technohr_last_bio_emp')
+    if (!targetEmpId && m !== 'nfc') { setError('أدخل كود الموظف'); return }
     setLoading(true); setError(''); setInfo('')
     try {
-      const res = await api.loginEmployee(empId.trim().toUpperCase(), pass, m, extra)
+      const res = await api.loginEmployee(targetEmpId, pass, m, extra)
       if (res.success) {
         setEmployee(res.employee)
         navigate('/home')
@@ -52,21 +61,41 @@ export default function EmployeeLogin() {
   }
 
   const handleBiometric = async () => {
-    if (!empId.trim()) { setError('أدخل كود الموظف أولاً'); return }
-    setLoading(true); setError(''); setInfo('جارٍ التحقق البيومتري...')
+    const targetEmpId = empId.trim().toUpperCase() || localStorage.getItem('technohr_last_bio_emp')
+    const savedCred = localStorage.getItem('technohr_last_bio_cred')
+
+    if (!targetEmpId) {
+      setError('يرجى إدخال كود الموظف لأول مرة فقط لربط البصمة')
+      setLoading(false)
+      return
+    }
+
+    setLoading(true); setError(''); setInfo('يرجى تأكيد البصمة / Face ID على الجهاز...')
     try {
-      // اجيب credential_id للموظف ده
-      const res = await api.loginEmployee(empId.trim().toUpperCase(), '', 'get_credential', {})
-      if (!res.success) { setError(res.error || 'الموظف غير موجود'); setLoading(false); setInfo(''); return }
-      const credId = res.webauthn_credential
+      let credId = savedCred
       if (!credId) {
-        setError('لم يتم تسجيل البصمة لهذا الموظف - راجع الأدمن')
+        // إذا لم يكن مخزناً محلياً، نجيبه من السيرفر
+        const res = await api.loginEmployee(targetEmpId, '', 'get_credential', {})
+        if (!res.success) { setError(res.error || 'الموظف غير موجود'); setLoading(false); setInfo(''); return }
+        credId = res.webauthn_credential
+      }
+
+      if (!credId) {
+        setError('لم يتم تسجيل البصمة لهذا الموظف - سجل دخول بالباسورد وقم بتفعيل البصمة من الإعدادات')
         setLoading(false); setInfo(''); return
       }
+
+      // فتح البصمة فوراً على جهاز الموظف
       const verified = await verifyWebAuthn(credId)
       if (verified) {
-        setEmployee(res.employee)
-        navigate('/home')
+        // تسجيل دخول مباشر
+        const res = await api.loginEmployee(targetEmpId, '', 'webauthn_direct', {})
+        if (res.success) {
+          setEmployee(res.employee)
+          navigate('/home')
+        } else {
+          setError(res.error || 'فشل تسجيل الدخول بالبصمة')
+        }
       } else {
         setError('فشل التحقق البيومتري - حاول مرة أخرى')
       }
@@ -99,7 +128,7 @@ export default function EmployeeLogin() {
               <button
                 key={k}
                 onClick={() => { setMethod(k); setError(''); setInfo('') }}
-                className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-bold transition-all ${
+                className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                   method === k
                     ? 'bg-gold-500 text-white shadow-md'
                     : 'text-gray-500 dark:text-dark-muted'
@@ -111,7 +140,7 @@ export default function EmployeeLogin() {
             ))}
           </div>
 
-          {/* Employee ID - shown for password + biometric */}
+          {/* Employee ID - Shown if password or if no saved bio */}
           {method !== 'nfc' && (
             <div className="relative">
               <FiUser className="absolute right-4 top-1/2 -translate-y-1/2 text-gold-500 pointer-events-none" />
@@ -153,7 +182,7 @@ export default function EmployeeLogin() {
 
           {/* Action Buttons */}
           {method === 'password' && (
-            <button onClick={() => doLogin('password')} disabled={loading} className="btn-gold">
+            <button onClick={() => doLogin('password')} disabled={loading} className="btn-gold cursor-pointer">
               {loading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 : <><FiLogIn /> دخول</>}
@@ -161,7 +190,7 @@ export default function EmployeeLogin() {
           )}
 
           {method === 'nfc' && (
-            <button onClick={handleNFC} disabled={loading} className="btn-gold">
+            <button onClick={handleNFC} disabled={loading} className="btn-gold cursor-pointer">
               {loading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 : <><FiCreditCard /> قرّب الكارت</>}
@@ -169,10 +198,10 @@ export default function EmployeeLogin() {
           )}
 
           {method === 'biometric' && (
-            <button onClick={handleBiometric} disabled={loading} className="btn-gold animate-pulse-gold">
+            <button onClick={handleBiometric} disabled={loading} className="btn-gold animate-pulse-gold cursor-pointer">
               {loading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <><FiShield /> بصمة / Face ID</>}
+                : <><FiShield /> فتح بالبصمة / Face ID</>}
             </button>
           )}
 
