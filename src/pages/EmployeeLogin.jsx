@@ -4,12 +4,13 @@ import { useStore } from '../store/useStore'
 import { api } from '../api/sheets'
 import { readNFC } from '../utils/nfc'
 import { verifyWebAuthn } from '../utils/webauthn'
-import { FiUser, FiLock, FiLogIn, FiCreditCard, FiShield } from 'react-icons/fi'
+import { FiUser, FiLock, FiLogIn, FiCreditCard, FiShield, FiSmile } from 'react-icons/fi'
 
 const METHODS = [
-  { k: 'password',  icon: FiLock,       ar: 'باسورد' },
-  { k: 'nfc',       icon: FiCreditCard, ar: 'NFC كارت' },
-  { k: 'biometric', icon: FiShield,     ar: 'بصمة / Face ID' },
+  { k: 'password',     icon: FiLock,       ar: 'كلمة السر' },
+  { k: 'fingerprint',  icon: FiShield,     ar: 'بصمة الإصبع' },
+  { k: 'faceid',       icon: FiSmile,      ar: 'Face ID' },
+  { k: 'nfc',          icon: FiCreditCard, ar: 'كارت NFC' },
 ]
 
 export default function EmployeeLogin() {
@@ -60,44 +61,35 @@ export default function EmployeeLogin() {
     }
   }
 
-  const handleBiometric = async () => {
+  const handleBiometric = async (typeLabel) => {
     const targetEmpId = empId.trim().toUpperCase() || localStorage.getItem('technohr_last_bio_emp')
-    const savedCred = localStorage.getItem('technohr_last_bio_cred')
+    let credId = localStorage.getItem(`technohr_bio_cred_${targetEmpId}`) || localStorage.getItem('technohr_last_bio_cred')
 
-    if (!targetEmpId) {
-      setError('يرجى إدخال كود الموظف لأول مرة فقط لربط البصمة')
-      setLoading(false)
-      return
-    }
-
-    setLoading(true); setError(''); setInfo('يرجى تأكيد البصمة / Face ID على الجهاز...')
+    setLoading(true); setError(''); setInfo(`يرجى تأكيد ${typeLabel} على الجهاز...`)
     try {
-      let credId = savedCred
-      if (!credId) {
-        // إذا لم يكن مخزناً محلياً، نجيبه من السيرفر
+      if (!credId && targetEmpId) {
         const res = await api.loginEmployee(targetEmpId, '', 'get_credential', {})
-        if (!res.success) { setError(res.error || 'الموظف غير موجود'); setLoading(false); setInfo(''); return }
-        credId = res.webauthn_credential
+        if (res.success && res.webauthn_credential) {
+          credId = res.webauthn_credential
+        }
       }
 
       if (!credId) {
-        setError('لم يتم تسجيل البصمة لهذا الموظف - سجل دخول بالباسورد وقم بتفعيل البصمة من الإعدادات')
+        setError(`لم يتم تسجيل ${typeLabel} على هذا الجهاز - ادخل بكلمة السر أولاً ثم فعلها من الإعدادات`)
         setLoading(false); setInfo(''); return
       }
 
-      // فتح البصمة فوراً على جهاز الموظف
       const verified = await verifyWebAuthn(credId)
       if (verified) {
-        // تسجيل دخول مباشر
         const res = await api.loginEmployee(targetEmpId, '', 'webauthn_direct', {})
         if (res.success) {
           setEmployee(res.employee)
           navigate('/home')
         } else {
-          setError(res.error || 'فشل تسجيل الدخول بالبصمة')
+          setError(res.error || `فشل تسجيل الدخول بـ ${typeLabel}`)
         }
       } else {
-        setError('فشل التحقق البيومتري - حاول مرة أخرى')
+        setError(`فشل التحقق من ${typeLabel} - حاول مرة أخرى`)
       }
     } catch (e) {
       setError(e.message)
@@ -123,12 +115,12 @@ export default function EmployeeLogin() {
           <h2 className="font-bold text-lg dark:text-white">تسجيل دخول الموظف</h2>
 
           {/* Method Tabs */}
-          <div className="grid grid-cols-3 gap-1 bg-gray-100 dark:bg-dark-card2 rounded-2xl p-1">
+          <div className="grid grid-cols-4 gap-1 bg-gray-100 dark:bg-dark-card2 rounded-2xl p-1">
             {METHODS.map(({ k, icon: Icon, ar }) => (
               <button
                 key={k}
                 onClick={() => { setMethod(k); setError(''); setInfo('') }}
-                className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`flex flex-col items-center gap-1 py-2.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
                   method === k
                     ? 'bg-gold-500 text-white shadow-md'
                     : 'text-gray-500 dark:text-dark-muted'
@@ -140,8 +132,8 @@ export default function EmployeeLogin() {
             ))}
           </div>
 
-          {/* Employee ID - Shown if password or if no saved bio */}
-          {method !== 'nfc' && (
+          {/* Employee ID field */}
+          {method === 'password' && (
             <div className="relative">
               <FiUser className="absolute right-4 top-1/2 -translate-y-1/2 text-gold-500 pointer-events-none" />
               <input
@@ -160,7 +152,7 @@ export default function EmployeeLogin() {
               <input
                 type="password"
                 className="input-field pr-11"
-                placeholder="الباسورد"
+                placeholder="كلمة السر"
                 value={pass}
                 onChange={e => setPass(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && doLogin('password')}
@@ -185,7 +177,23 @@ export default function EmployeeLogin() {
             <button onClick={() => doLogin('password')} disabled={loading} className="btn-gold cursor-pointer">
               {loading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <><FiLogIn /> دخول</>}
+                : <><FiLogIn /> دخول بكلمة السر</>}
+            </button>
+          )}
+
+          {method === 'fingerprint' && (
+            <button onClick={() => handleBiometric('بصمة الإصبع')} disabled={loading} className="btn-gold animate-pulse-gold cursor-pointer">
+              {loading
+                ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <><FiShield /> دخول ببصمة الإصبع</>}
+            </button>
+          )}
+
+          {method === 'faceid' && (
+            <button onClick={() => handleBiometric('Face ID')} disabled={loading} className="btn-gold animate-pulse-gold cursor-pointer">
+              {loading
+                ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <><FiSmile /> دخول بـ Face ID</>}
             </button>
           )}
 
@@ -193,15 +201,7 @@ export default function EmployeeLogin() {
             <button onClick={handleNFC} disabled={loading} className="btn-gold cursor-pointer">
               {loading
                 ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <><FiCreditCard /> قرّب الكارت</>}
-            </button>
-          )}
-
-          {method === 'biometric' && (
-            <button onClick={handleBiometric} disabled={loading} className="btn-gold animate-pulse-gold cursor-pointer">
-              {loading
-                ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <><FiShield /> فتح بالبصمة / Face ID</>}
+                : <><FiCreditCard /> قرّب كارت NFC</>}
             </button>
           )}
 

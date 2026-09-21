@@ -4,12 +4,12 @@ import { api } from '../api/sheets'
 import { getLocation } from '../utils/location'
 import { registerWebAuthn } from '../utils/webauthn'
 import { EmployeeLayout } from '../components/Layout'
-import { FiCheckCircle, FiXCircle, FiMapPin, FiClock, FiAlertCircle, FiRefreshCw, FiShield, FiCalendar, FiLock, FiSettings } from 'react-icons/fi'
+import { FiCheckCircle, FiXCircle, FiMapPin, FiClock, FiAlertCircle, FiRefreshCw, FiShield, FiCalendar, FiLock, FiSettings, FiCreditCard } from 'react-icons/fi'
 import { format } from 'date-fns'
 import { ar } from 'date-fns/locale'
 
 export default function EmployeeHome() {
-  const { employee, settings } = useStore()
+  const { employee, settings, setEmployee } = useStore()
   const [record, setRecord]   = useState(null)
   const [loading, setLoading] = useState(false)
   const [bioLoading, setBioLoading] = useState(false)
@@ -18,16 +18,21 @@ export default function EmployeeHome() {
   
   // Modals
   const [showLeaveModal, setShowLeaveModal] = useState(false)
-  const [showSettingsModal, setShowSettingsModal] = useState(false)
+  const [showSecurityModal, setShowSecurityModal] = useState(false)
   const [leaveData, setLeaveData] = useState({ start_date: '', end_date: '', leave_type: 'annual', reason: '' })
   const [leaveLoading, setLeaveLoading] = useState(false)
 
+  // حالة البصمة المسجلة للموظف
+  const [hasBioRegistered, setHasBioRegistered] = useState(false)
+
   useEffect(() => {
     loadStatus()
+    checkBioStatus()
+    
     // تحديث كل ثانية للساعة
     const t1 = setInterval(() => setTime(new Date()), 1000)
-    // تحديث دوري كل 15 ثانية لحالة اليوم
-    const t2 = setInterval(() => loadStatus(), 15000)
+    // تحديث دوري كل 10 ثوانٍ لحالة اليوم للحفاظ على بقاء الحضور/الانصراف مظبوطاً
+    const t2 = setInterval(() => loadStatus(), 10000)
     return () => { clearInterval(t1); clearInterval(t2) }
   }, [])
 
@@ -38,6 +43,13 @@ export default function EmployeeHome() {
         setRecord(res.data)
       }
     } catch {}
+  }
+
+  const checkBioStatus = () => {
+    const savedCred = localStorage.getItem(`technohr_bio_cred_${employee.employee_id}`)
+    if (savedCred || employee?.webauthn_credential) {
+      setHasBioRegistered(true)
+    }
   }
 
   const handleCheckIn = async () => {
@@ -55,7 +67,7 @@ export default function EmployeeHome() {
         setRecord({
           check_in_time: res.check_in_time || format(new Date(), 'HH:mm:ss'),
           check_out_time: null,
-          status: res.status,
+          status: res.status || 'present',
           late_minutes: res.late_minutes || 0
         })
       } else {
@@ -100,10 +112,10 @@ export default function EmployeeHome() {
       const credId = await registerWebAuthn(employee.employee_id, employee.name)
       const res = await api.saveWebAuthn(employee.employee_id, credId)
       if (res.success) {
-        // حفظ آخر credential محلياً لتسهيل الدخول بدون كتابة كود الموظف
+        localStorage.setItem(`technohr_bio_cred_${employee.employee_id}`, credId)
         localStorage.setItem('technohr_last_bio_emp', employee.employee_id)
-        localStorage.setItem('technohr_last_bio_cred', credId)
-        setMsg({ type: 'success', text: 'تم تسجيل وتفعيل البصمة/الوجه لجميع المرات القادمة! ✅' })
+        setHasBioRegistered(true)
+        setMsg({ type: 'success', text: 'تم تفعيل ربط البصمة / Face ID بنجاح! ✅' })
       } else {
         setMsg({ type: 'error', text: res.error || 'فشل حفظ البصمة في السيرفر' })
       }
@@ -135,7 +147,7 @@ export default function EmployeeHome() {
     }
   }
 
-  // شروط حالة الحضور والانصراف
+  // حالة الحضور والانصراف
   const hasIn  = !!record?.check_in_time
   const hasOut = !!record?.check_out_time
   const dateStr = format(time, 'EEEE، d MMMM yyyy', { locale: ar })
@@ -161,7 +173,7 @@ export default function EmployeeHome() {
           </p>
           <div className="flex items-center justify-center gap-1 text-xs text-gray-400 dark:text-dark-muted">
             <FiMapPin className="w-3 h-3" />
-            <span>نطاق الفرع المسموح: {settings?.radius_meters || 100} متر</span>
+            <span>نطاق التسجيل: {settings?.radius_meters || 100} متر</span>
           </div>
         </div>
 
@@ -189,7 +201,7 @@ export default function EmployeeHome() {
                     <FiCheckCircle className="w-5 h-5 text-green-500" />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400 dark:text-dark-muted">أول وقت حضور</p>
+                    <p className="text-xs text-gray-400 dark:text-dark-muted">وقت الحضور</p>
                     <p className="font-bold text-lg text-gray-900 dark:text-white">{record.check_in_time}</p>
                   </div>
                 </div>
@@ -204,7 +216,7 @@ export default function EmployeeHome() {
                     <FiXCircle className="w-5 h-5 text-blue-500" />
                   </div>
                   <div>
-                    <p className="text-xs text-gray-400 dark:text-dark-muted">آخر وقت انصراف</p>
+                    <p className="text-xs text-gray-400 dark:text-dark-muted">وقت الانصراف</p>
                     <p className="font-bold text-lg text-gray-900 dark:text-white">{record.check_out_time}</p>
                   </div>
                 </div>
@@ -213,13 +225,13 @@ export default function EmployeeHome() {
               {hasIn && !hasOut && (
                 <div className="flex items-center gap-2 text-sm text-green-500 font-semibold bg-green-50 dark:bg-green-900/20 p-2.5 rounded-xl">
                   <span className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
-                  أنت داخل المكان الآن
+                  أنت داخل المكان الآن (متاح تسجيل الانصراف)
                 </div>
               )}
 
               {hasIn && hasOut && (
                 <div className="bg-gray-50 dark:bg-dark-card2 rounded-2xl p-3 text-center">
-                  <p className="text-xs text-gray-400 dark:text-dark-muted">إجمالي ساعات العمل المسجلة</p>
+                  <p className="text-xs text-gray-400 dark:text-dark-muted">إجمالي ساعات العمل اليوم</p>
                   <p className="text-2xl font-black gradient-text">{record.total_hours} ساعة</p>
                 </div>
               )}
@@ -239,7 +251,7 @@ export default function EmployeeHome() {
           </div>
         )}
 
-        {/* ── Main Action Button ─────────────────────────── */}
+        {/* ── Main Action Buttons ─────────────────────────── */}
         {!hasIn && (
           <button
             onClick={handleCheckIn}
@@ -267,7 +279,7 @@ export default function EmployeeHome() {
         {hasIn && hasOut && (
           <div className="card text-center py-6 space-y-2 border-green-200 dark:border-green-800/30">
             <FiCheckCircle className="w-12 h-12 text-green-500 mx-auto" />
-            <p className="font-bold text-lg text-gray-900 dark:text-white">تم تسجيل حضورك وانصرافك بنجاح ✅</p>
+            <p className="font-bold text-lg text-gray-900 dark:text-white">تم تسجيل حضورك وانصرافك اليوم بنجاح ✅</p>
           </div>
         )}
 
@@ -288,6 +300,23 @@ export default function EmployeeHome() {
           <span className="text-xs text-gold-600 font-bold">تقديم ←</span>
         </button>
 
+        {/* ── Security Settings Trigger Button (زر إعدادات الدخول) ─────────────────────────── */}
+        <button
+          onClick={() => setShowSecurityModal(true)}
+          className="card w-full flex items-center justify-between p-4 hover:border-gold-500 transition-all cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gold-100 dark:bg-gold-900/30 flex items-center justify-center">
+              <FiSettings className="w-5 h-5 text-gold-600" />
+            </div>
+            <div className="text-right">
+              <p className="font-bold text-sm dark:text-white">إعدادات الدخول والأمان</p>
+              <p className="text-xs text-gray-400">تفعيل البصمة / Face ID وتحديث كلمة السر</p>
+            </div>
+          </div>
+          <span className="text-xs text-gold-600 font-bold">فتح الإعدادات ←</span>
+        </button>
+
         {/* ── Employee Info ───────────────────────────── */}
         <div className="card space-y-3">
           <h3 className="font-bold text-sm text-gray-500 dark:text-dark-muted">معلوماتي</h3>
@@ -303,27 +332,52 @@ export default function EmployeeHome() {
           </div>
         </div>
 
-        {/* ── Settings & Biometric Section (إعدادات الحساب والأمان) ────────────────── */}
-        <div className="card space-y-3">
-          <h3 className="font-bold text-sm text-gray-500 dark:text-dark-muted flex items-center gap-1">
-            <FiSettings className="w-4 h-4 text-gold-500" />
-            إعدادات الحساب والأمان
-          </h3>
-          <button
-            onClick={handleRegisterBio}
-            disabled={bioLoading}
-            className="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-dark-card2 rounded-2xl border border-gray-100 dark:border-dark-border hover:border-gold-500 transition-all text-right cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <FiShield className="w-5 h-5 text-gold-500" />
-              <div>
-                <p className="text-xs font-bold dark:text-white">تفعيل البصمة / Face ID لهذا الجهاز</p>
-                <p className="text-[10px] text-gray-400">للدخول المباشر بدون كود الموظف مرة أخرى</p>
+        {/* ── Modal Security Settings (نافذة إعدادات الدخول للأمان) ────────────────── */}
+        {showSecurityModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="card w-full max-w-md bg-white dark:bg-dark-card space-y-4 animate-slide-up">
+              <div className="flex justify-between items-center border-b border-gray-100 dark:border-dark-border pb-3">
+                <h3 className="font-bold text-lg dark:text-white">إعدادات الدخول والأمان</h3>
+                <button onClick={() => setShowSecurityModal(false)} className="text-gray-400 hover:text-red-500 font-bold text-xl">✕</button>
+              </div>
+
+              <div className="space-y-4">
+                {/* حالة البصمة */}
+                <div className="p-3 bg-gray-50 dark:bg-dark-card2 rounded-2xl border border-gray-100 dark:border-dark-border flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <FiShield className={`w-6 h-6 ${hasBioRegistered ? 'text-green-500' : 'text-gray-400'}`} />
+                    <div>
+                      <p className="text-sm font-bold dark:text-white">البصمة / Face ID</p>
+                      <p className="text-xs text-gray-400">
+                        {hasBioRegistered ? '🟢 مفعلة ومربوطة بهذا الجهاز' : '⚪ غير مفعلة على هذا الجهاز'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleRegisterBio}
+                    disabled={bioLoading}
+                    className="btn-gold px-4 py-2 text-xs w-auto"
+                  >
+                    {bioLoading ? '...' : (hasBioRegistered ? 'إعادة تفعيل' : 'تفعيل الآن')}
+                  </button>
+                </div>
+
+                {/* حالة كارت NFC */}
+                <div className="p-3 bg-gray-50 dark:bg-dark-card2 rounded-2xl border border-gray-100 dark:border-dark-border flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <FiCreditCard className={`w-6 h-6 ${employee?.nfc_card_id ? 'text-green-500' : 'text-gray-400'}`} />
+                    <div>
+                      <p className="text-sm font-bold dark:text-white">كارت NFC</p>
+                      <p className="text-xs text-gray-400">
+                        {employee?.nfc_card_id ? `🟢 مربوط برقم: ${employee.nfc_card_id}` : '⚪ غير مربوط (تواصل مع الأدمن)'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-            {bioLoading ? <div className="w-4 h-4 border-2 border-gold-500 border-t-transparent rounded-full animate-spin" /> : <span className="text-xs text-gold-600 font-bold">تفعيل</span>}
-          </button>
-        </div>
+          </div>
+        )}
 
         {/* ── Modal Request Leave ───────────────────────────── */}
         {showLeaveModal && (
