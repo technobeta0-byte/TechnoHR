@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useStore } from '../store/useStore'
 import { api } from '../api/sheets'
 import { AdminLayout } from '../components/Layout'
-import { FiUsers, FiCheckCircle, FiXCircle, FiAlertCircle, FiClock, FiRefreshCw, FiCalendar } from 'react-icons/fi'
+import { FiUsers, FiCheckCircle, FiXCircle, FiAlertCircle, FiClock, FiRefreshCw, FiCalendar, FiAlertTriangle } from 'react-icons/fi'
 
 export default function AdminDashboard() {
   const { adminToken } = useStore()
@@ -42,12 +42,13 @@ export default function AdminDashboard() {
 
           {/* Stats Grid */}
           <div className="grid grid-cols-2 gap-3">
-            <Stat icon={<FiUsers       className="w-5 h-5" />} label="إجمالي الموظفين" value={d.total_employees} color="blue"   />
-            <Stat icon={<FiCheckCircle className="w-5 h-5" />} label="حاضرون الآن"     value={d.present_now}    color="green"  />
-            <Stat icon={<FiClock       className="w-5 h-5" />} label="انصرفوا"          value={d.checked_out}    color="purple" />
-            <Stat icon={<FiAlertCircle className="w-5 h-5" />} label="متأخرون"          value={d.late_today}     color="amber"  />
-            <Stat icon={<FiXCircle     className="w-5 h-5" />} label="غائبون اليوم"     value={d.absent_today}   color="red"    />
-            <Stat icon={<FiCalendar    className="w-5 h-5" />} label="طلبات إجازة"      value={d.pending_leaves} color="blue"   />
+            <Stat icon={<FiUsers          className="w-5 h-5" />} label="إجمالي الموظفين" value={d.total_employees}   color="blue"   />
+            <Stat icon={<FiCheckCircle    className="w-5 h-5" />} label="حاضرون الآن"     value={d.present_now}      color="green"  />
+            <Stat icon={<FiClock          className="w-5 h-5" />} label="انصرفوا"          value={d.checked_out}      color="purple" />
+            <Stat icon={<FiAlertCircle    className="w-5 h-5" />} label="متأخرون"          value={d.late_today}       color="amber"  />
+            <Stat icon={<FiXCircle        className="w-5 h-5" />} label="غائبون اليوم"     value={d.absent_today}     color="red"    />
+            <Stat icon={<FiAlertTriangle  className="w-5 h-5" />} label="نسيان بصمة"       value={d.forgot_checkout ?? 0} color="orange" />
+            <Stat icon={<FiCalendar       className="w-5 h-5" />} label="طلبات إجازة"      value={d.pending_leaves}   color="blue"   />
           </div>
 
           {/* Absent List */}
@@ -85,8 +86,16 @@ export default function AdminDashboard() {
                       <p className="text-xs text-gray-400 dark:text-dark-muted">{r.check_in_time}</p>
                     </div>
                   </div>
-                  <span className={`badge badge-${r.status === 'present' ? 'present' : r.status === 'late' ? 'late' : 'absent'}`}>
-                    {r.status === 'present' ? 'حاضر' : r.status === 'late' ? 'متأخر' : r.status}
+                  <span className={`badge badge-${
+                    r.status === 'present'         ? 'present'
+                    : r.status === 'late'          ? 'late'
+                    : r.status === 'forgot_checkout'? 'forgot'
+                    : 'absent'
+                  }`}>
+                    {r.status === 'present'          ? 'حاضر'
+                     : r.status === 'late'           ? 'متأخر'
+                     : r.status === 'forgot_checkout'? 'نسيان بصمة'
+                     : r.status}
                   </span>
                 </div>
               ))}
@@ -107,6 +116,7 @@ function Stat({ icon, label, value, color }) {
     red:    'bg-red-50    dark:bg-red-900/20    text-red-600    dark:text-red-400',
     amber:  'bg-amber-50  dark:bg-amber-900/20  text-amber-600  dark:text-amber-400',
     purple: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
+    orange: 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400',
   }
   return (
     <div className={`stat-card ${map[color]}`}>

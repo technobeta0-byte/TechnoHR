@@ -23,7 +23,7 @@ export const useStore = create(
       // ── Employee ───────────────────────────────────────
       employee: null,
       setEmployee: (emp) => set({ employee: emp }),
-      logoutEmployee: ()  => set({ employee: null }),
+      logoutEmployee: () => set({ employee: null, todayRecord: null, todayRecordDate: null }),
 
       // ── Settings cache ─────────────────────────────────
       settings: null,
@@ -32,11 +32,43 @@ export const useStore = create(
       // ── Location (session only) ────────────────────────
       userLocation: null,
       setUserLocation: (loc) => set({ userLocation: loc }),
+
+      // ── Today Record - Persistent ─────────────────────
+      // يتحفظ في localStorage بحيث لو الموظف أغلق التطبيق وفتحه
+      // يلاقي حالته (حاضر / مسجل انصراف) من أول ثانية بدون انتظار API
+      todayRecord: null,
+      todayRecordDate: null,
+
+      setTodayRecord: (record) => {
+        const today = new Date().toISOString().slice(0, 10)
+        set({ todayRecord: record, todayRecordDate: today })
+      },
+
+      // يرجع الـ record المحفوظ لو كان بتاع نهارده فقط
+      getTodayRecordIfFresh: () => {
+        const state = get()
+        const today = new Date().toISOString().slice(0, 10)
+        if (state.todayRecordDate === today && state.todayRecord) {
+          return state.todayRecord
+        }
+        // لو البيانات بتاعة إمبارح أو أقدم، امسحها
+        if (state.todayRecordDate && state.todayRecordDate !== today) {
+          set({ todayRecord: null, todayRecordDate: null })
+        }
+        return null
+      },
+
+      clearTodayRecord: () => set({ todayRecord: null, todayRecordDate: null }),
     }),
     {
-      name: 'technohr-v1',
-      // احفظ الثيم فقط في localStorage - لا tokens لأسباب أمنية
-      partialize: (state) => ({ isDark: state.isDark }),
+      name: 'technohr-v2',
+      // احفظ: الثيم + سجل اليوم + تاريخه
+      // لا تحفظ: tokens، employee، settings (أمان)
+      partialize: (state) => ({
+        isDark:          state.isDark,
+        todayRecord:     state.todayRecord,
+        todayRecordDate: state.todayRecordDate,
+      }),
     }
   )
 )
