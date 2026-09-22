@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useStore } from '../store/useStore'
 import { api } from '../api/sheets'
-import { getLocation } from '../utils/location'
+import { getLocation, startLocationWatch } from '../utils/location'
 import { registerWebAuthn } from '../utils/webauthn'
 import { EmployeeLayout } from '../components/Layout'
 import {
@@ -61,6 +61,9 @@ export default function EmployeeHome() {
 
   // ── Initialization ────────────────────────────────────────────────────
   useEffect(() => {
+    // ابدأ مراقبة الموقع في الخلفية فوراً عشان يكون جاهز عند الضغط
+    startLocationWatch()
+
     // 1. الـ record بدأ من الـ cache (في الـ useState initial value)
     // 2. بعدين يعمل sync من الـ API لتحديث الحالة الحقيقية
     syncStatus(false)
@@ -108,8 +111,8 @@ export default function EmployeeHome() {
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
-      // sync بعد العملية بثانيتين للتأكد
-      setTimeout(() => syncStatus(true), 2000)
+      // sync بعد العملية للتأكيد (بدون delay)
+      syncStatus(true)
     }
   }
 
@@ -136,7 +139,7 @@ export default function EmployeeHome() {
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
-      setTimeout(() => syncStatus(true), 2000)
+      syncStatus(true)
     }
   }
 
