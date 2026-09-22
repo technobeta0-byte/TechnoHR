@@ -33,42 +33,46 @@ export default function EmployeeHome() {
   const [leaveLoading, setLeaveLoading] = useState(false)
   const [hasBioRegistered, setHasBioRegistered] = useState(false)
 
-  // ── مرجع لمنع الـ sync بعد عملية حضور/انصراف ────────────────────────
-  // بنستخدم ref عشان نعرف "في فترة حماية" ومش المفروض يتعمل sync
+  // ── مرجع لمنع الـ sync العشوائي في أول ثوانٍ بعد الحضور فقط ────────
   const protectUntil = useRef(0)
 
   // ── دالة مركزية لتحديث الـ record في State + Store ──────────────────
   const updateRecord = useCallback((newRecord) => {
     const resolved = typeof newRecord === 'function'
-      ? newRecord(null) // للـ functional updates
+      ? newRecord(null)
       : newRecord
     setRecord(resolved)
     setTodayRecord(resolved)
   }, [setTodayRecord])
 
-  // ── Safe sync: لا يمسح optimistic update في فترة الحماية ──────────────
+  // ── Sync دقيق وسريع مرتبط مباشرة بالشيت ──────────────────────────────
   const syncStatus = useCallback(async (quiet = false) => {
-    // لو في فترة حماية (بعد check-in/out مباشرة) → تجاهل
-    if (Date.now() < protectUntil.current) return
+    // أثناء المزامنة الصامتة التلقائية فقط: نحترم فترة الحماية
+    if (quiet && Date.now() < protectUntil.current) return
 
     try {
       if (!quiet) setSyncing(true)
       const res = await api.todayStatus(employee.employee_id)
       if (res.success) {
-        // لو الشيت رجع null بعد عملية ناجحة → متمسحش الـ optimistic record
-        if (Date.now() < protectUntil.current) return
-        // لو رجع record حقيقي فيه check_in → حدّث
-        if (res.data?.check_in_time || !record) {
+        // لو الشيت رجع null أو مفيش وقت حضور (مثلاً تم مسح الحضور من الشيت يدويًا)
+        if (!res.data || !res.data.check_in_time) {
+          // إذا كان تحديث يدوي أو انتهت فترة الحماية: نمسح الكاش فوراً!
+          if (!quiet || Date.now() >= protectUntil.current) {
+            setRecord(null)
+            setTodayRecord(null)
+          }
+        } else {
+          // في حضور مسجل فعلي في الشيت
           setRecord(res.data)
           setTodayRecord(res.data)
         }
       }
     } catch {
-      // فشل الـ sync مش كارثة
+      // إهمال أخطاء الشبكة أثناء المزامنة
     } finally {
       if (!quiet) setSyncing(false)
     }
-  }, [employee.employee_id, record, setTodayRecord])
+  }, [employee.employee_id, setTodayRecord])
 
   const checkBioStatus = useCallback(() => {
     const savedCred = localStorage.getItem(`technohr_bio_cred_${employee.employee_id}`)
@@ -80,11 +84,11 @@ export default function EmployeeHome() {
     startLocationWatch()       // ابدأ تجميع الموقع في الخلفية فوراً
     checkBioStatus()
 
-    // Sync أولي بعد 1.5 ثانية (نعطي الـ cache فرصة يظهر أول)
-    const initTimer = setTimeout(() => syncStatus(false), 1500)
+    // Sync مع الشيت بعد نصف ثانية للتحقق من أي تغييرات
+    const initTimer = setTimeout(() => syncStatus(true), 500)
 
     const t1 = setInterval(() => setTime(new Date()), 1000)
-    const t2 = setInterval(() => syncStatus(true), 30_000)
+    const t2 = setInterval(() => syncStatus(true), 20_000)
 
     return () => {
       clearTimeout(initTimer)
@@ -99,30 +103,7 @@ export default function EmployeeHome() {
     setLoading(true)
     setMsg(null)
 
-    // ── فحص محلي أول: لو مسجل بالفعل في الـ cache → وقف فوراً ──────────
-    const cached = getTodayRecordIfFresh()
-    if (cached?.check_in_time) {
-      setRecord(cached)
-      setMsg({ type: 'error', text: `تم تسجيل الحضور بالفعل الساعة ${cached.check_in_time}` })
-      setLoading(false)
-      return
-    }
-
     try {
-      // ── Optimistic Update فوري (قبل ما الـ API يرد) ──────────────────
-      const optimisticTime = format(new Date(), 'HH:mm:ss')
-      const optimisticRecord = {
-        check_in_time:  optimisticTime,
-        check_out_time: null,
-        status:         'present',
-        late_minutes:   0,
-        total_hours:    0,
-      }
-      updateRecord(optimisticRecord)
-
-      // ── احمِ الـ optimistic update لمدة 15 ثانية ────────────────────
-      protectUntil.current = Date.now() + 15_000
-
       const loc = await getLocation()
       const res = await api.checkIn({
         employee_id: employee.employee_id,
@@ -132,9 +113,8 @@ export default function EmployeeHome() {
       })
 
       if (res.success) {
-        // ← حدّث بالبيانات الحقيقية من السيرفر
         const confirmedRecord = {
-          check_in_time:  res.check_in_time || optimisticTime,
+          check_in_time:  res.check_in_time || format(new Date(), 'HH:mm:ss'),
           check_out_time: null,
           status:         res.status || 'present',
           late_minutes:   res.late_minutes || 0,
@@ -142,26 +122,19 @@ export default function EmployeeHome() {
         }
         updateRecord(confirmedRecord)
         setMsg({ type: 'success', text: res.message || 'تم تسجيل الحضور بنجاح ✅' })
-        // مدد الحماية بعد التأكيد
         protectUntil.current = Date.now() + 10_000
 
-      } else if (res.already_checked_in) {
-        // الموظف مسجل بالفعل - حدّث من الـ record اللي رجع من الشيت
-        const serverRecord = res.record || optimisticRecord
-        updateRecord(serverRecord)
+      } else if (res.already_checked_in || res.already_completed) {
+        // الموظف مسجل بالفعل - حدّث بالبيانات القادمة من الشيت
+        if (res.record) {
+          updateRecord(res.record)
+        }
         setMsg({ type: 'error', text: res.error })
-
       } else {
-        // فشل: امسح الـ optimistic update
-        updateRecord(null)
-        protectUntil.current = 0
         setMsg({ type: 'error', text: res.error })
       }
 
     } catch (e) {
-      // خطأ في الموقع أو الشبكة: امسح الـ optimistic
-      updateRecord(null)
-      protectUntil.current = 0
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
@@ -175,28 +148,19 @@ export default function EmployeeHome() {
     setMsg(null)
 
     try {
-      // ── Optimistic Update فوري ──────────────────────────────────────
-      const optimisticOutTime = format(new Date(), 'HH:mm:ss')
-      setRecord(prev => ({
-        ...prev,
-        check_out_time: optimisticOutTime,
-        status: prev?.status === 'forgot_checkout' ? 'present' : (prev?.status || 'present'),
-      }))
-      protectUntil.current = Date.now() + 15_000
-
       const res = await api.checkOut({
         employee_id: employee.employee_id,
         method: 'password',
       })
 
       if (res.success) {
-        const outTime = res.check_out_time || optimisticOutTime
+        const outTime = res.check_out_time || format(new Date(), 'HH:mm:ss')
         setRecord(prev => {
           const updated = {
             ...prev,
             check_out_time: outTime,
             total_hours:    res.total_hours || 0,
-            status:         prev?.status === 'forgot_checkout' ? 'present' : prev?.status,
+            status:         prev?.status === 'forgot_checkout' ? 'present' : (prev?.status || 'present'),
           }
           setTodayRecord(updated)
           return updated
@@ -204,23 +168,10 @@ export default function EmployeeHome() {
         setMsg({ type: 'success', text: res.message || 'تم تسجيل الانصراف بنجاح ✅' })
         protectUntil.current = Date.now() + 10_000
       } else {
-        // فشل: أرجع الحالة السابقة
-        setRecord(prev => {
-          const reverted = { ...prev, check_out_time: null }
-          setTodayRecord(reverted)
-          return reverted
-        })
-        protectUntil.current = 0
         setMsg({ type: 'error', text: res.error })
       }
 
     } catch (e) {
-      setRecord(prev => {
-        const reverted = { ...prev, check_out_time: null }
-        setTodayRecord(reverted)
-        return reverted
-      })
-      protectUntil.current = 0
       setMsg({ type: 'error', text: e.message })
     } finally {
       setLoading(false)
@@ -301,10 +252,13 @@ export default function EmployeeHome() {
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-sm text-gray-500 dark:text-dark-muted">حالة اليوم</h3>
             <button
-              onClick={() => syncStatus(false)}
+              onClick={() => {
+                protectUntil.current = 0
+                syncStatus(false)
+              }}
               disabled={syncing}
-              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-card2 transition-colors"
-              title="تحديث"
+              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-dark-card2 transition-colors cursor-pointer"
+              title="تحديث من الشيت"
             >
               <FiRefreshCw className={`w-4 h-4 text-gray-400 ${syncing ? 'animate-spin' : ''}`} />
             </button>
@@ -403,7 +357,7 @@ export default function EmployeeHome() {
             className="btn-gold text-lg py-5 animate-pulse-gold cursor-pointer"
           >
             {loading
-              ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ? <div className="flex items-center justify-center gap-2"><div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>جارٍ تسجيل الحضور...</span></div>
               : <><FiCheckCircle className="w-6 h-6" /> تسجيل الحضور</>}
           </button>
         )}
@@ -416,7 +370,7 @@ export default function EmployeeHome() {
             className={`text-lg py-5 cursor-pointer ${isForgot ? 'btn-red' : 'btn-blue'}`}
           >
             {loading
-              ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ? <div className="flex items-center justify-center gap-2"><div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /><span>جارٍ تسجيل الانصراف...</span></div>
               : <><FiXCircle className="w-6 h-6" /> {isForgot ? 'تصحيح الانصراف' : 'تسجيل الانصراف'}</>}
           </button>
         )}
